@@ -123,6 +123,12 @@ if train_btn:
             # Encode any text columns to numbers
             for col in working.select_dtypes(include=["object", "category"]).columns:
                 working[col] = OrdinalEncoder().fit_transform(working[[col]])
+            # Drop rows with missing values
+            before = len(working)
+            working = working.dropna()
+            dropped = before - len(working)
+            if dropped > 0:
+                st.warning(f"⚠️ {dropped} row(s) with missing values were dropped before training.")
             X = working[feature_cols].values
             y = working[target_col].values
  
@@ -132,7 +138,7 @@ if train_btn:
                 random_state=int(random_state),
                 stratify=(y if model_name == "Logistic Regression" else None),
             )
- 
+        
             # Feature scaling
             if scale_features:
                 scaler = StandardScaler()
