@@ -16,22 +16,19 @@ from sklearn.metrics import (
     mean_squared_error, mean_absolute_error, r2_score,
 )
 
-# ── Page config ───────────────────────────────────────────────────────────────
+## Page setup
 st.set_page_config(
     page_title="Supervised Machine Learning Tool",
-    layout="wide",
-)
+    layout="wide")
 
 st.title("Supervised Machine Learning Tool")
 st.markdown(
-    "Upload a CSV dataset, choose a model, tune hyperparameters, "
-    "and explore performance metrics — all in one place."
-)
+    "Upload a dataset, experiment with hyperparameters, and observe how these affect model training and performance.")
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+## Sidebar
 with st.sidebar:
-    st.header("1 · Dataset")
+    st.header("Dataset")
     uploaded = st.file_uploader("Upload a CSV file", type="csv")
 
     df = None
@@ -39,24 +36,24 @@ with st.sidebar:
         df = pd.read_csv(uploaded)
         st.success(f"Loaded {df.shape[0]} rows × {df.shape[1]} columns")
     else:
-        st.info("Awaiting CSV upload…")
+        st.info("Upload a CSV file")
 
     if df is not None:
         st.divider()
-        st.header("2 · Columns")
+        st.header("Choose Variables")
         target_col = st.selectbox(
-            "Target column",
+            "Variable to estimate",
             df.columns.tolist(),
             index=len(df.columns) - 1,
         )
         feature_cols = st.multiselect(
-            "Feature columns",
+            "Features",
             [c for c in df.columns if c != target_col],
             default=[c for c in df.columns if c != target_col],
         )
 
         st.divider()
-        st.header("3 · Model")
+        st.header("Choose a Model")
         model_name = st.selectbox(
             "Algorithm",
             ["Linear Regression", "Logistic Regression"],
@@ -67,10 +64,10 @@ with st.sidebar:
         )
 
         st.divider()
-        st.header("4 · Hyperparameters")
+        st.header("Tune Hyperparameters")
 
         test_size = st.slider("Test set size", 0.1, 0.5, 0.2, 0.05)
-        random_state = st.number_input("Random state", value=42, step=1)
+        random_state = st.number_input("Random state", value=100, step=1)
 
         model_params: dict = {}
 
@@ -99,17 +96,17 @@ with st.sidebar:
             scale_features = st.checkbox("Scale features (StandardScaler)", value=True)
 
         st.divider()
-        train_btn = st.button("🚀 Train Model", use_container_width=True, type="primary")
+        train_btn = st.button("Train Model", use_container_width=True, type="primary")
 
-# ── Main Panel ────────────────────────────────────────────────────────────────
+## Main panel
 if df is None:
-    st.info("👈 Upload a CSV dataset from the sidebar to get started.")
+    st.info("Upload a dataset")
     st.stop()
 
 # Data preview
-with st.expander("📋 Dataset preview", expanded=False):
+with st.expander("Quick view of Dataset", expanded=True):
     st.write(f"**Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
-    st.dataframe(df.head(10), use_container_width=True)
+    st.dataframe(df.head(11), use_container_width=True)
     st.write("**Descriptive statistics:**")
     st.dataframe(df.describe(), use_container_width=True)
 
