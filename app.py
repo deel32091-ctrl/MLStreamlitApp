@@ -5,15 +5,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.linear_model import Ridge, LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import (
-    # Classification
     accuracy_score, precision_score, recall_score,
     f1_score, roc_auc_score, confusion_matrix,
     classification_report, roc_curve,
-    # Regression
     mean_squared_error, mean_absolute_error, r2_score,
 )
 
@@ -26,12 +23,9 @@ st.title("Supervised Machine Learning Tool")
 st.markdown(
     "Upload a dataset, experiment with hyperparameters, and observe how these affect model training and performance.")
 
-
-## Helper: guess whether a column is continuous or categorical
 def is_continuous(series):
     """Numeric column with more than 10 unique values → treat as continuous."""
     return pd.api.types.is_numeric_dtype(series) and series.nunique() > 10
-
 
 ## Sidebar
 with st.sidebar:
@@ -63,18 +57,17 @@ with st.sidebar:
         st.header("Choose a Model")
         model_name = st.selectbox(
             "Algorithm",
-            ["Linear Regression", "Logistic Regression", "Decision Tree"],
+            ["Linear Regression", "Logistic Regression"],
             help=(
-                "Linear Regression → continuous numeric target  \n"
-                "Logistic Regression → binary categorical target  \n"
-                "Decision Tree → categorical target (binary or multiclass)"
+                "Linear Regression for continuous numeric targets  \n"
+                "Logistic Regression for binary targets"
             ),
         )
 
         st.divider()
         st.header("Tune Hyperparameters")
 
-        random_state = st.number_input("Random state", value=100, step=1)
+        random_state = st.number_input("Random seed", value=100, step=1)
         test_size = st.slider("Test set size", 0.1, 0.5, 0.2, 0.05)
 
         model_params: dict = {}
@@ -101,26 +94,6 @@ with st.sidebar:
             model_params["max_iter"] = 1000
             model_params["random_state"] = int(random_state)
 
-        elif model_name == "Decision Tree":
-            model_params["max_depth"] = st.slider(
-                "Max depth", 1, 20, 5,
-                help="Maximum depth of the tree. Deeper trees can overfit.",
-            )
-            model_params["min_samples_split"] = st.slider(
-                "Min samples split", 2, 20, 2,
-                help="Minimum number of samples required to split an internal node.",
-            )
-            model_params["min_samples_leaf"] = st.slider(
-                "Min samples leaf", 1, 20, 1,
-                help="Minimum number of samples required to be at a leaf node.",
-            )
-            model_params["criterion"] = st.selectbox(
-                "Criterion",
-                ["gini", "entropy", "log_loss"],
-                help="Function used to measure the quality of a split.",
-            )
-            model_params["random_state"] = int(random_state)
-
         st.divider()
         train_btn = st.button("Train Model", use_container_width=True, type="primary")
 
@@ -129,7 +102,6 @@ if df is None:
     st.info("Upload a dataset to perform analysis.")
     st.stop()
 
-# Data preview
 with st.expander("Quick view of Dataset", expanded=True):
     st.write(f"**Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
     st.dataframe(df.head(11), use_container_width=True)
@@ -142,49 +114,51 @@ if not feature_cols:
 
 ## Training
 if train_btn:
-    with st.spinner("Training model..."):
+    with st.spinner("Training model"):
         try:
             # ── Model / target compatibility check ────────────────────────────
             target_is_continuous = is_continuous(df[target_col])
-            target_is_categorical = not target_is_continuous
 
-            if model_name == "Linear Regression" and target_is_categorical:
+            if model_name == "Linear Regression" and not target_is_continuous:
                 st.error(
-                    f"**Model mismatch:** '{target_col}' looks categorical "
-                    f"({df[target_col].nunique()} unique values). "
+                    f"**'{target_col}'** does not look like a continuous numeric target. "
                     "Linear Regression requires a continuous numeric target. "
-                    "Try **Logistic Regression** or **Decision Tree** instead."
+                    "Please select a different target column or switch to **Logistic Regression**."
                 )
                 st.stop()
 
             if model_name == "Logistic Regression" and target_is_continuous:
                 st.error(
-                    f"**Model mismatch:** '{target_col}' looks continuous "
-                    f"({df[target_col].nunique()} unique values). "
-                    "Logistic Regression requires a categorical target. "
-                    "Try **Linear Regression** instead."
-                )
-                st.stop()
-
-            if model_name == "Decision Tree" and target_is_continuous:
-                st.error(
-                    f"**Model mismatch:** '{target_col}' looks continuous "
-                    f"({df[target_col].nunique()} unique values). "
-                    "Decision Tree (classifier) requires a categorical target. "
-                    "Try **Linear Regression** instead."
+                    f"**'{target_col}'** does not look like a binary target. "
+                    "Logistic Regression requires a binary categorical target. "
+                    "Please select a different target column or switch to **Linear Regression**."
                 )
                 st.stop()
 
             # ── Data preparation ──────────────────────────────────────────────
             from sklearn.preprocessing import OrdinalEncoder
             working = df[feature_cols + [target_col]].copy()
-            for col in working.select_dtypes(include=["object", "category"]).columns:
+
+            # For logistic regression, save original target labels before encoding
+            original_target_labels = None
+            if model_name == "Logistic Regression":
+                le = LabelEncoder()
+                original_target_labels = le.classes_ if hasattr(le, 'classes_') else None
+                # Fit on the full target column to capture all label names
+                le.fit(working[target_col].astype(str))
+                original_target_labels = le.classes_
+                working[target_col] = le.transform(working[target_col].astype(str))
+
+            # Encode any remaining text feature columns
+            for col in working[feature_cols].select_dtypes(include=["object", "category"]).columns:
                 working[col] = OrdinalEncoder().fit_transform(working[[col]])
+
             before = len(working)
             working = working.dropna()
             dropped = before - len(working)
             if dropped > 0:
                 st.warning(f"⚠️ {dropped} row(s) with missing values were dropped before training.")
+
             X = working[feature_cols].values
             y = working[target_col].values
 
@@ -192,7 +166,7 @@ if train_btn:
                 X, y,
                 test_size=float(test_size),
                 random_state=int(random_state),
-                stratify=(y if model_name in ["Logistic Regression", "Decision Tree"] else None),
+                stratify=(y if model_name == "Logistic Regression" else None),
             )
 
             scaler = StandardScaler()
@@ -274,10 +248,13 @@ if train_btn:
                 model.fit(X_train, y_train)
                 y_pred = model.predict(X_test)
 
-                classes   = np.unique(y)
-                n_classes = len(classes)
+                # Use original label names for display
+                class_indices = np.unique(y).astype(int)
+                display_labels = original_target_labels[class_indices] if original_target_labels is not None else class_indices
+
+                n_classes = len(class_indices)
                 is_binary = n_classes == 2
-                avg       = "binary" if is_binary else "weighted"
+                avg = "binary" if is_binary else "weighted"
 
                 acc  = accuracy_score(y_test, y_pred)
                 prec = precision_score(y_test, y_pred, average=avg, zero_division=0)
@@ -307,7 +284,7 @@ if train_btn:
                     fig, ax = plt.subplots(figsize=(5, 4))
                     sns.heatmap(
                         cm, annot=True, fmt="d", cmap="Blues",
-                        xticklabels=classes, yticklabels=classes, ax=ax
+                        xticklabels=display_labels, yticklabels=display_labels, ax=ax
                     )
                     ax.set_xlabel("Predicted label")
                     ax.set_ylabel("True label")
@@ -321,9 +298,9 @@ if train_btn:
                         fpr, tpr, _ = roc_curve(y_test, y_prob[:, 1])
                         ax.plot(fpr, tpr, label=f"AUC = {auc:.3f}", color="#185FA5", lw=2)
                     else:
-                        for i, cls in enumerate(classes):
-                            fpr, tpr, _ = roc_curve((y_test == cls).astype(int), y_prob[:, i])
-                            ax.plot(fpr, tpr, lw=1.5, label=f"Class {cls}")
+                        for i, (idx, lbl) in enumerate(zip(class_indices, display_labels)):
+                            fpr, tpr, _ = roc_curve((y_test == idx).astype(int), y_prob[:, i])
+                            ax.plot(fpr, tpr, lw=1.5, label=str(lbl))
                     ax.plot([0, 1], [0, 1], "k--", lw=1)
                     ax.set_xlabel("False Positive Rate")
                     ax.set_ylabel("True Positive Rate")
@@ -352,95 +329,11 @@ if train_btn:
                     plt.close(fig)
 
                 with tab4:
-                    report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
-                    st.dataframe(
-                        pd.DataFrame(report).transpose().style.format(precision=3),
-                        use_container_width=True,
+                    report = classification_report(
+                        y_test, y_pred,
+                        target_names=display_labels,
+                        output_dict=True, zero_division=0
                     )
-
-                st.session_state["last_result"] = {
-                    "model_name": model_name,
-                    "acc": acc, "prec": prec, "rec": rec, "f1": f1, "auc": auc,
-                }
-
-            # ── DECISION TREE ─────────────────────────────────────────────────
-            elif model_name == "Decision Tree":
-                model = DecisionTreeClassifier(**model_params)
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-
-                classes   = np.unique(y)
-                n_classes = len(classes)
-                is_binary = n_classes == 2
-                avg       = "binary" if is_binary else "weighted"
-
-                acc  = accuracy_score(y_test, y_pred)
-                prec = precision_score(y_test, y_pred, average=avg, zero_division=0)
-                rec  = recall_score(y_test, y_pred, average=avg, zero_division=0)
-                f1   = f1_score(y_test, y_pred, average=avg, zero_division=0)
-
-                y_prob = model.predict_proba(X_test)
-                if is_binary:
-                    auc = roc_auc_score(y_test, y_prob[:, 1])
-                else:
-                    auc = roc_auc_score(y_test, y_prob, multi_class="ovr", average="weighted")
-
-                st.subheader("Model Performance — Decision Tree")
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("Accuracy",  f"{acc:.4f}")
-                c2.metric("Precision", f"{prec:.4f}")
-                c3.metric("Recall",    f"{rec:.4f}")
-                c4.metric("F1 Score",  f"{f1:.4f}")
-                c5.metric("AUC-ROC",   f"{auc:.4f}")
-
-                tab1, tab2, tab3, tab4 = st.tabs(
-                    ["Confusion Matrix", "ROC Curve", "Feature Importances", "Classification Report"]
-                )
-
-                with tab1:
-                    cm = confusion_matrix(y_test, y_pred)
-                    fig, ax = plt.subplots(figsize=(5, 4))
-                    sns.heatmap(
-                        cm, annot=True, fmt="d", cmap="Blues",
-                        xticklabels=classes, yticklabels=classes, ax=ax
-                    )
-                    ax.set_xlabel("Predicted label")
-                    ax.set_ylabel("True label")
-                    ax.set_title("Confusion Matrix — Decision Tree")
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab2:
-                    fig, ax = plt.subplots(figsize=(5, 4))
-                    if is_binary:
-                        fpr, tpr, _ = roc_curve(y_test, y_prob[:, 1])
-                        ax.plot(fpr, tpr, label=f"AUC = {auc:.3f}", color="#185FA5", lw=2)
-                    else:
-                        for i, cls in enumerate(classes):
-                            fpr, tpr, _ = roc_curve((y_test == cls).astype(int), y_prob[:, i])
-                            ax.plot(fpr, tpr, lw=1.5, label=f"Class {cls}")
-                    ax.plot([0, 1], [0, 1], "k--", lw=1)
-                    ax.set_xlabel("False Positive Rate")
-                    ax.set_ylabel("True Positive Rate")
-                    ax.set_title("ROC Curve — Decision Tree")
-                    ax.legend(loc="lower right")
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab3:
-                    imp_df = pd.DataFrame({
-                        "Feature": feature_cols,
-                        "Importance": model.feature_importances_,
-                    }).sort_values("Importance", ascending=True)
-                    fig, ax = plt.subplots(figsize=(5, max(3, len(feature_cols) * 0.35)))
-                    ax.barh(imp_df["Feature"], imp_df["Importance"], color="#1D9E75")
-                    ax.set_xlabel("Importance")
-                    ax.set_title("Feature Importances — Decision Tree")
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab4:
-                    report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
                     st.dataframe(
                         pd.DataFrame(report).transpose().style.format(precision=3),
                         use_container_width=True,
