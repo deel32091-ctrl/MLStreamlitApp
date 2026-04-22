@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     # Classification
@@ -18,25 +18,15 @@ from sklearn.metrics import (
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="ML Explorer",
-    page_icon="🤖",
+    page_title="Supervised Machine Learning Tool",
     layout="wide",
 )
 
-st.title("🤖 Machine Learning Explorer")
+st.title("Supervised Machine Learning Tool")
 st.markdown(
     "Upload a CSV dataset, choose a model, tune hyperparameters, "
     "and explore performance metrics — all in one place."
 )
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def encode_dataframe(df):
-    """Label-encode any non-numeric columns so sklearn can consume them."""
-    df = df.copy()
-    le = LabelEncoder()
-    for col in df.select_dtypes(include=["object", "category"]).columns:
-        df[col] = le.fit_transform(df[col].astype(str))
-    return df
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -131,9 +121,8 @@ if not feature_cols:
 if train_btn:
     with st.spinner("Training model…"):
         try:
-            data_encoded = encode_dataframe(df)
-            X = data_encoded[feature_cols].values
-            y = data_encoded[target_col].values
+            X = df[feature_cols].values
+            y = df[target_col].values
 
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y,
