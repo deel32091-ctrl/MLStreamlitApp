@@ -139,7 +139,7 @@ if train_btn:
                 stratify=(y if model_name == "Logistic Regression" else None),
             )
 
-            # Feature scaling
+            # Feature scaling for regularization
             
             scaler = StandardScaler()
             X_train = scaler.fit_transform(X_train)
