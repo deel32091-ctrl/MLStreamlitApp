@@ -118,16 +118,21 @@ if not feature_cols:
 if train_btn:
     with st.spinner("Training model…"):
         try:
-            X = df[feature_cols].values
-            y = df[target_col].values
-
+            from sklearn.preprocessing import OrdinalEncoder
+            working = df[feature_cols + [target_col]].copy()
+            # Encode any text columns to numbers
+            for col in working.select_dtypes(include=["object", "category"]).columns:
+                working[col] = OrdinalEncoder().fit_transform(working[[col]])
+            X = working[feature_cols].values
+            y = working[target_col].values
+ 
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y,
                 test_size=float(test_size),
                 random_state=int(random_state),
                 stratify=(y if model_name == "Logistic Regression" else None),
             )
-
+ 
             # Feature scaling
             if scale_features:
                 scaler = StandardScaler()
