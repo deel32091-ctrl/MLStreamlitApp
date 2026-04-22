@@ -141,10 +141,10 @@ if train_btn:
             )
 
             # Feature scaling
-            if scale_features:
-                scaler = StandardScaler()
-                X_train = scaler.fit_transform(X_train)
-                X_test = scaler.transform(X_test)
+            
+            scaler = StandardScaler()
+            X_train = scaler.fit_transform(X_train)
+            X_test = scaler.transform(X_test)
 
             ## Linear Regression section
             if model_name == "Linear Regression":
