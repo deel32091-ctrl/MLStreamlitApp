@@ -94,7 +94,6 @@ with st.sidebar:
             model_params["max_iter"] = 1000
             model_params["random_state"] = int(random_state)
 
-        scale_features = st.checkbox("Scale features (StandardScaler)", value=True)
 
         st.divider()
         train_btn = st.button("Train Model", use_container_width=True, type="primary")
