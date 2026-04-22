@@ -58,8 +58,8 @@ with st.sidebar:
             "Algorithm",
             ["Linear Regression", "Logistic Regression"],
             help=(
-                "Linear Regression → continuous numeric target  \n"
-                "Logistic Regression → categorical / binary target"
+                "Linear Regression for continuous numeric targets  \n"
+                "Logistic Regression for binary targets"
             ),
         )
 
@@ -73,7 +73,7 @@ with st.sidebar:
 
         if model_name == "Linear Regression":
             model_params["alpha"] = st.slider(
-                "Regularization strength (α)",
+                "Regularization parameter (α)",
                 0.0, 10.0, 1.0, 0.1,
                 help="Higher α → stronger regularization, shrinks coefficients toward zero. α = 0 is equivalent to plain OLS.",
             )
@@ -101,7 +101,7 @@ with st.sidebar:
 
 ## Main panel
 if df is None:
-    st.info("Upload a dataset")
+    st.info("Upload a dataset to perform analysis.")
     st.stop()
 
 # Data preview
@@ -117,7 +117,7 @@ if not feature_cols:
 
 ## Training
 if train_btn:
-    with st.spinner("Training model…"):
+    with st.spinner("Training model"):
         try:
             from sklearn.preprocessing import OrdinalEncoder
             working = df[feature_cols + [target_col]].copy()
@@ -146,7 +146,7 @@ if train_btn:
                 X_train = scaler.fit_transform(X_train)
                 X_test = scaler.transform(X_test)
 
-            ## LINEAR REGRESSION (Ridge)
+            ## Linear Regression section
             if model_name == "Linear Regression":
                 model = Ridge(**model_params)
                 model.fit(X_train, y_train)
@@ -165,7 +165,7 @@ if train_btn:
                 c4.metric("MAE", f"{mae:.4f}")
 
                 tab1, tab2, tab3 = st.tabs(
-                    ["Predicted vs Actual", "Residuals", "Feature Coefficients"]
+                    ["Predicted Values vs Actual Values", "Residuals", "Feature Coefficients"]
                 )
 
                 with tab1:
@@ -219,7 +219,7 @@ if train_btn:
                     "r2": r2, "mse": mse, "rmse": rmse, "mae": mae,
                 }
 
-            ## LOGISTIC REGRESSION
+            ## Logistic Regression Section
             elif model_name == "Logistic Regression":
                 model = LogisticRegression(**model_params)
                 model.fit(X_train, y_train)
@@ -321,17 +321,5 @@ if train_btn:
             st.error(f"Training failed: {e}")
             st.exception(e)
 
-elif "last_result" in st.session_state:
-    r = st.session_state["last_result"]
-    if r["model_name"] == "Linear Regression":
-        st.info(
-            f"Last trained: **{r['model_name']}** — "
-            f"R² {r['r2']:.4f} · RMSE {r['rmse']:.4f} · MAE {r['mae']:.4f}"
-        )
-    else:
-        st.info(
-            f"Last trained: **{r['model_name']}** — "
-            f"Accuracy {r['acc']:.4f} · F1 {r['f1']:.4f} · AUC {r['auc']:.4f}"
-        )
 else:
-    st.info("👈 Upload a CSV, configure your model in the sidebar, then click Train Model.")
+    st.info("After uploading the dataset, configure the model and click "Train Model"")
