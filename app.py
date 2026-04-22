@@ -322,4 +322,4 @@ if train_btn:
             st.exception(e)
 
 else:
-    st.info("After uploading the dataset, configure the model and click "Train Model"")
+    st.info("After uploading the dataset, configure the model and click Train Model.")
