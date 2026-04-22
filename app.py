@@ -6,7 +6,7 @@ import seaborn as sns
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.metrics import (
     # Classification
     accuracy_score, precision_score, recall_score,
@@ -72,9 +72,11 @@ with st.sidebar:
         model_params: dict = {}
 
         if model_name == "Linear Regression":
-            model_params["fit_intercept"] = st.checkbox("Fit intercept", value=True)
-            # StandardScaler toggle (meaningful for LR coefficient interpretation)
-            scale_features = st.checkbox("Scale features (StandardScaler)", value=True)
+            model_params["alpha"] = st.slider(
+                "Regularization strength (α)",
+                0.0, 10.0, 1.0, 0.1,
+                help="Higher α → stronger regularization, shrinks coefficients toward zero. α = 0 is equivalent to plain OLS.",
+            )
 
         elif model_name == "Logistic Regression":
             model_params["C"] = st.slider(
@@ -82,18 +84,17 @@ with st.sidebar:
                 0.01, 10.0, 1.0, 0.01,
                 help="Smaller C → stronger regularization.",
             )
-            model_params["max_iter"] = st.slider("Max iterations", 100, 2000, 200, 100)
-            model_params["solver"] = st.selectbox(
-                "Solver", ["lbfgs", "saga", "liblinear"],
-                help="lbfgs works well for small datasets; saga supports l1/l2 on large data.",
-            )
             model_params["penalty"] = st.selectbox(
                 "Penalty",
-                ["l2", "l1", "none"],
-                help="l1 drives some coefficients to zero (feature selection); l2 shrinks all.",
+                ["l2", "l1"],
+                help="L2 shrinks all coefficients toward zero; L1 can zero out coefficients entirely (built-in feature selection).",
             )
+            # liblinear is used because it supports both l1 and l2
+            model_params["solver"] = "liblinear"
+            model_params["max_iter"] = 1000
             model_params["random_state"] = int(random_state)
-            scale_features = st.checkbox("Scale features (StandardScaler)", value=True)
+
+        scale_features = st.checkbox("Scale features (StandardScaler)", value=True)
 
         st.divider()
         train_btn = st.button("Train Model", use_container_width=True, type="primary")
@@ -114,7 +115,7 @@ if not feature_cols:
     st.warning("Please select at least one feature column.")
     st.stop()
 
-# ── Training ──────────────────────────────────────────────────────────────────
+## Training
 if train_btn:
     with st.spinner("Training model…"):
         try:
@@ -131,23 +132,23 @@ if train_btn:
                 st.warning(f"⚠️ {dropped} row(s) with missing values were dropped before training.")
             X = working[feature_cols].values
             y = working[target_col].values
- 
+
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y,
                 test_size=float(test_size),
                 random_state=int(random_state),
                 stratify=(y if model_name == "Logistic Regression" else None),
             )
-        
+
             # Feature scaling
             if scale_features:
                 scaler = StandardScaler()
                 X_train = scaler.fit_transform(X_train)
                 X_test = scaler.transform(X_test)
 
-            # ── LINEAR REGRESSION ─────────────────────────────────────────────
+            ## LINEAR REGRESSION (Ridge)
             if model_name == "Linear Regression":
-                model = LinearRegression(**model_params)
+                model = Ridge(**model_params)
                 model.fit(X_train, y_train)
                 y_pred = model.predict(X_test)
 
@@ -156,7 +157,7 @@ if train_btn:
                 rmse = np.sqrt(mse)
                 mae  = mean_absolute_error(y_test, y_pred)
 
-                st.subheader("📊 Model Performance — Linear Regression")
+                st.subheader("Model Performance — Linear Regression")
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("R²", f"{r2:.4f}")
                 c2.metric("MSE", f"{mse:.4f}")
@@ -218,12 +219,8 @@ if train_btn:
                     "r2": r2, "mse": mse, "rmse": rmse, "mae": mae,
                 }
 
-            # ── LOGISTIC REGRESSION ───────────────────────────────────────────
+            ## LOGISTIC REGRESSION
             elif model_name == "Logistic Regression":
-                # Handle "none" penalty string → None object for sklearn
-                if model_params.get("penalty") == "none":
-                    model_params["penalty"] = None
-
                 model = LogisticRegression(**model_params)
                 model.fit(X_train, y_train)
                 y_pred = model.predict(X_test)
@@ -244,7 +241,7 @@ if train_btn:
                 else:
                     auc = roc_auc_score(y_test, y_prob, multi_class="ovr", average="weighted")
 
-                st.subheader("📊 Model Performance — Logistic Regression")
+                st.subheader("Model Performance — Logistic Regression")
                 c1, c2, c3, c4, c5 = st.columns(5)
                 c1.metric("Accuracy",  f"{acc:.4f}")
                 c2.metric("Precision", f"{prec:.4f}")
@@ -337,4 +334,4 @@ elif "last_result" in st.session_state:
             f"Accuracy {r['acc']:.4f} · F1 {r['f1']:.4f} · AUC {r['auc']:.4f}"
         )
 else:
-    st.info("👈 Upload a CSV, configure your model in the sidebar, then click **Train Model**.")
+    st.info("👈 Upload a CSV, configure your model in the sidebar, then click Train Model.")
