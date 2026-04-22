@@ -7,6 +7,7 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import (
     # Classification
     accuracy_score, precision_score, recall_score,
@@ -24,6 +25,12 @@ st.set_page_config(
 st.title("Supervised Machine Learning Tool")
 st.markdown(
     "Upload a dataset, experiment with hyperparameters, and observe how these affect model training and performance.")
+
+
+## Helper: guess whether a column is continuous or categorical
+def is_continuous(series):
+    """Numeric column with more than 10 unique values → treat as continuous."""
+    return pd.api.types.is_numeric_dtype(series) and series.nunique() > 10
 
 
 ## Sidebar
@@ -56,10 +63,11 @@ with st.sidebar:
         st.header("Choose a Model")
         model_name = st.selectbox(
             "Algorithm",
-            ["Linear Regression", "Logistic Regression"],
+            ["Linear Regression", "Logistic Regression", "Decision Tree"],
             help=(
-                "Linear Regression for continuous numeric targets  \n"
-                "Logistic Regression for binary targets"
+                "Linear Regression → continuous numeric target  \n"
+                "Logistic Regression → binary categorical target  \n"
+                "Decision Tree → categorical target (binary or multiclass)"
             ),
         )
 
@@ -68,7 +76,6 @@ with st.sidebar:
 
         random_state = st.number_input("Random state", value=100, step=1)
         test_size = st.slider("Test set size", 0.1, 0.5, 0.2, 0.05)
-
 
         model_params: dict = {}
 
@@ -90,11 +97,29 @@ with st.sidebar:
                 ["l2", "l1"],
                 help="L2 shrinks all coefficients toward zero; L1 can zero out coefficients entirely (built-in feature selection).",
             )
-            # liblinear is used because it supports both l1 and l2
             model_params["solver"] = "liblinear"
             model_params["max_iter"] = 1000
             model_params["random_state"] = int(random_state)
 
+        elif model_name == "Decision Tree":
+            model_params["max_depth"] = st.slider(
+                "Max depth", 1, 20, 5,
+                help="Maximum depth of the tree. Deeper trees can overfit.",
+            )
+            model_params["min_samples_split"] = st.slider(
+                "Min samples split", 2, 20, 2,
+                help="Minimum number of samples required to split an internal node.",
+            )
+            model_params["min_samples_leaf"] = st.slider(
+                "Min samples leaf", 1, 20, 1,
+                help="Minimum number of samples required to be at a leaf node.",
+            )
+            model_params["criterion"] = st.selectbox(
+                "Criterion",
+                ["gini", "entropy", "log_loss"],
+                help="Function used to measure the quality of a split.",
+            )
+            model_params["random_state"] = int(random_state)
 
         st.divider()
         train_btn = st.button("Train Model", use_container_width=True, type="primary")
@@ -117,14 +142,44 @@ if not feature_cols:
 
 ## Training
 if train_btn:
-    with st.spinner("Training model"):
+    with st.spinner("Training model..."):
         try:
+            # ── Model / target compatibility check ────────────────────────────
+            target_is_continuous = is_continuous(df[target_col])
+            target_is_categorical = not target_is_continuous
+
+            if model_name == "Linear Regression" and target_is_categorical:
+                st.error(
+                    f"**Model mismatch:** '{target_col}' looks categorical "
+                    f"({df[target_col].nunique()} unique values). "
+                    "Linear Regression requires a continuous numeric target. "
+                    "Try **Logistic Regression** or **Decision Tree** instead."
+                )
+                st.stop()
+
+            if model_name == "Logistic Regression" and target_is_continuous:
+                st.error(
+                    f"**Model mismatch:** '{target_col}' looks continuous "
+                    f"({df[target_col].nunique()} unique values). "
+                    "Logistic Regression requires a categorical target. "
+                    "Try **Linear Regression** instead."
+                )
+                st.stop()
+
+            if model_name == "Decision Tree" and target_is_continuous:
+                st.error(
+                    f"**Model mismatch:** '{target_col}' looks continuous "
+                    f"({df[target_col].nunique()} unique values). "
+                    "Decision Tree (classifier) requires a categorical target. "
+                    "Try **Linear Regression** instead."
+                )
+                st.stop()
+
+            # ── Data preparation ──────────────────────────────────────────────
             from sklearn.preprocessing import OrdinalEncoder
             working = df[feature_cols + [target_col]].copy()
-            # Encode any text columns to numbers
             for col in working.select_dtypes(include=["object", "category"]).columns:
                 working[col] = OrdinalEncoder().fit_transform(working[[col]])
-            # Drop rows with missing values
             before = len(working)
             working = working.dropna()
             dropped = before - len(working)
@@ -137,16 +192,14 @@ if train_btn:
                 X, y,
                 test_size=float(test_size),
                 random_state=int(random_state),
-                stratify=(y if model_name == "Logistic Regression" else None),
+                stratify=(y if model_name in ["Logistic Regression", "Decision Tree"] else None),
             )
 
-            # Feature scaling for regularization
-            
             scaler = StandardScaler()
             X_train = scaler.fit_transform(X_train)
             X_test = scaler.transform(X_test)
 
-            ## Linear Regression section
+            # ── LINEAR REGRESSION ─────────────────────────────────────────────
             if model_name == "Linear Regression":
                 model = Ridge(**model_params)
                 model.fit(X_train, y_train)
@@ -183,18 +236,15 @@ if train_btn:
                 with tab2:
                     residuals = y_test - y_pred
                     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-
                     axes[0].scatter(y_pred, residuals, alpha=0.6, color="#E05A3A", edgecolors="white", s=50)
                     axes[0].axhline(0, color="black", lw=1.5, linestyle="--")
                     axes[0].set_xlabel("Predicted values")
                     axes[0].set_ylabel("Residuals")
                     axes[0].set_title("Residuals vs Fitted")
-
                     axes[1].hist(residuals, bins=20, color="#534AB7", edgecolor="white")
                     axes[1].set_xlabel("Residual")
                     axes[1].set_ylabel("Frequency")
                     axes[1].set_title("Residual Distribution")
-
                     plt.tight_layout()
                     st.pyplot(fig)
                     plt.close(fig)
@@ -204,7 +254,6 @@ if train_btn:
                         "Feature": feature_cols,
                         "Coefficient": model.coef_
                     }).sort_values("Coefficient", key=abs, ascending=True)
-
                     fig, ax = plt.subplots(figsize=(5, max(3, len(feature_cols) * 0.35)))
                     colors = ["#E05A3A" if c < 0 else "#1D9E75" for c in coef_df["Coefficient"]]
                     ax.barh(coef_df["Feature"], coef_df["Coefficient"], color=colors)
@@ -219,7 +268,7 @@ if train_btn:
                     "r2": r2, "mse": mse, "rmse": rmse, "mae": mae,
                 }
 
-            ## Logistic Regression Section
+            # ── LOGISTIC REGRESSION ───────────────────────────────────────────
             elif model_name == "Logistic Regression":
                 model = LogisticRegression(**model_params)
                 model.fit(X_train, y_train)
@@ -293,7 +342,6 @@ if train_btn:
                         "Feature": feature_cols,
                         "Coefficient": coefs,
                     }).sort_values("Coefficient", key=abs, ascending=True)
-
                     fig, ax = plt.subplots(figsize=(5, max(3, len(feature_cols) * 0.35)))
                     colors = ["#E05A3A" if c < 0 else "#1D9E75" for c in coef_df["Coefficient"]]
                     ax.barh(coef_df["Feature"], coef_df["Coefficient"], color=colors)
@@ -304,9 +352,95 @@ if train_btn:
                     plt.close(fig)
 
                 with tab4:
-                    report = classification_report(
-                        y_test, y_pred, output_dict=True, zero_division=0
+                    report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
+                    st.dataframe(
+                        pd.DataFrame(report).transpose().style.format(precision=3),
+                        use_container_width=True,
                     )
+
+                st.session_state["last_result"] = {
+                    "model_name": model_name,
+                    "acc": acc, "prec": prec, "rec": rec, "f1": f1, "auc": auc,
+                }
+
+            # ── DECISION TREE ─────────────────────────────────────────────────
+            elif model_name == "Decision Tree":
+                model = DecisionTreeClassifier(**model_params)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+
+                classes   = np.unique(y)
+                n_classes = len(classes)
+                is_binary = n_classes == 2
+                avg       = "binary" if is_binary else "weighted"
+
+                acc  = accuracy_score(y_test, y_pred)
+                prec = precision_score(y_test, y_pred, average=avg, zero_division=0)
+                rec  = recall_score(y_test, y_pred, average=avg, zero_division=0)
+                f1   = f1_score(y_test, y_pred, average=avg, zero_division=0)
+
+                y_prob = model.predict_proba(X_test)
+                if is_binary:
+                    auc = roc_auc_score(y_test, y_prob[:, 1])
+                else:
+                    auc = roc_auc_score(y_test, y_prob, multi_class="ovr", average="weighted")
+
+                st.subheader("Model Performance — Decision Tree")
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("Accuracy",  f"{acc:.4f}")
+                c2.metric("Precision", f"{prec:.4f}")
+                c3.metric("Recall",    f"{rec:.4f}")
+                c4.metric("F1 Score",  f"{f1:.4f}")
+                c5.metric("AUC-ROC",   f"{auc:.4f}")
+
+                tab1, tab2, tab3, tab4 = st.tabs(
+                    ["Confusion Matrix", "ROC Curve", "Feature Importances", "Classification Report"]
+                )
+
+                with tab1:
+                    cm = confusion_matrix(y_test, y_pred)
+                    fig, ax = plt.subplots(figsize=(5, 4))
+                    sns.heatmap(
+                        cm, annot=True, fmt="d", cmap="Blues",
+                        xticklabels=classes, yticklabels=classes, ax=ax
+                    )
+                    ax.set_xlabel("Predicted label")
+                    ax.set_ylabel("True label")
+                    ax.set_title("Confusion Matrix — Decision Tree")
+                    st.pyplot(fig)
+                    plt.close(fig)
+
+                with tab2:
+                    fig, ax = plt.subplots(figsize=(5, 4))
+                    if is_binary:
+                        fpr, tpr, _ = roc_curve(y_test, y_prob[:, 1])
+                        ax.plot(fpr, tpr, label=f"AUC = {auc:.3f}", color="#185FA5", lw=2)
+                    else:
+                        for i, cls in enumerate(classes):
+                            fpr, tpr, _ = roc_curve((y_test == cls).astype(int), y_prob[:, i])
+                            ax.plot(fpr, tpr, lw=1.5, label=f"Class {cls}")
+                    ax.plot([0, 1], [0, 1], "k--", lw=1)
+                    ax.set_xlabel("False Positive Rate")
+                    ax.set_ylabel("True Positive Rate")
+                    ax.set_title("ROC Curve — Decision Tree")
+                    ax.legend(loc="lower right")
+                    st.pyplot(fig)
+                    plt.close(fig)
+
+                with tab3:
+                    imp_df = pd.DataFrame({
+                        "Feature": feature_cols,
+                        "Importance": model.feature_importances_,
+                    }).sort_values("Importance", ascending=True)
+                    fig, ax = plt.subplots(figsize=(5, max(3, len(feature_cols) * 0.35)))
+                    ax.barh(imp_df["Feature"], imp_df["Importance"], color="#1D9E75")
+                    ax.set_xlabel("Importance")
+                    ax.set_title("Feature Importances — Decision Tree")
+                    st.pyplot(fig)
+                    plt.close(fig)
+
+                with tab4:
+                    report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
                     st.dataframe(
                         pd.DataFrame(report).transpose().style.format(precision=3),
                         use_container_width=True,
