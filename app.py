@@ -114,20 +114,26 @@ with st.expander("Quick Dataset Preview", expanded=True):
 
     with left_col:
         # Left column shows column names and their data types
+        # FIX: convert dtype objects to strings so pyarrow can serialize them
         st.markdown("**Column Names:**")
-        st.dataframe(df.dtypes.rename("type").reset_index().rename(columns={"index": "column"}),
-                     use_container_width=True, hide_index=True)
+        dtype_df = (df.dtypes
+                      .rename("type")
+                      .reset_index()
+                      .rename(columns={"index": "column"}))
+        dtype_df["type"] = dtype_df["type"].astype(str)
+        st.dataframe(dtype_df, width="stretch", hide_index=True)
+
         # Underneath, the dimensions of the dataset
         st.markdown(f"**Rows:** {df.shape[0]}  \n**Columns:** {df.shape[1]}")
 
     with right_col:
         # Right column shows the first 12 rows
         st.markdown("**First 12 rows:**")
-        st.dataframe(df.head(12), use_container_width=True)
+        st.dataframe(df.head(12), width="stretch")
 
     # Below both columns: descriptive statistics
     st.markdown("**Descriptive Statistics:**")
-    st.dataframe(df.describe(), use_container_width=True)
+    st.dataframe(df.describe(), width="stretch")
 
 ## TRAINING
 # Use st.spinner so the model runs immediately whenever a change is made in the sidebar
@@ -137,8 +143,8 @@ with st.spinner("Running the model"):
         # Grab only the selected feature columns
         all_var = df[feature_cols].copy()
 
-        # Encode any text/categorical columns so sklearn can work with them
-        for col in all_var.select_dtypes(include=["object", "category"]).columns:
+        # FIX: include "str" alongside "object"/"category" for pandas 3 compatibility
+        for col in all_var.select_dtypes(include=["object", "category", "str"]).columns:
             all_var[col] = OrdinalEncoder().fit_transform(all_var[[col]])
 
         # Drop rows with missing values — missing data is a separate problem
@@ -215,9 +221,9 @@ Adjust k and watch inertia and the Silhouette Score together to find the best nu
 
             with table2:
                 # Reduce to 2D with PCA so we can visualize clusters regardless of how many features were selected
-                pca_2d      = PCA(n_components=2, random_state=int(random_state))
-                X_2d        = pca_2d.fit_transform(X_scaled)
-                var_exp     = pca_2d.explained_variance_ratio_
+                pca_2d  = PCA(n_components=2, random_state=int(random_state))
+                X_2d    = pca_2d.fit_transform(X_scaled)
+                var_exp = pca_2d.explained_variance_ratio_
 
                 fig, ax = plt.subplots(figsize=(6, 5))
                 scatter = ax.scatter(X_2d[:, 0], X_2d[:, 1],
@@ -238,7 +244,7 @@ Adjust k and watch inertia and the Silhouette Score together to find the best nu
 
             with table3:
                 # Per-sample silhouette coefficients, grouped and sorted by cluster
-                sil_vals  = silhouette_samples(X_scaled, labels)
+                sil_vals   = silhouette_samples(X_scaled, labels)
                 n_clusters = model_params["n_clusters"]
                 colors     = plt.cm.tab10(np.linspace(0, 1, n_clusters))
 
@@ -288,7 +294,7 @@ Adjust k and watch inertia and the Silhouette Score together to find the best nu
             # Present the metrics below the dataset preview
             st.subheader("Model Performance: PCA")
             col1, col2, col3 = st.columns(3)
-            col1.metric("Components",        n_components)
+            col1.metric("Components",         n_components)
             col2.metric("Variance Explained", f"{cumulative_var[-1]*100:.2f}%")
             col3.metric("PC1 Variance",       f"{evr[0]*100:.2f}%")
 
