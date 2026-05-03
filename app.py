@@ -3,350 +3,358 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score, silhouette_samples
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.linear_model import Ridge, LogisticRegression
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score,
-    f1_score, roc_auc_score, confusion_matrix,
-    classification_report, roc_curve,
-    mean_squared_error, mean_absolute_error, r2_score,
-)
+## PAGE SET UP
+st.set_page_config(page_title="Unsupervised Machine Learning Tool", layout="wide")
+st.title("Unsupervised Machine Learning Tool")
+st.markdown("Upload a dataset, experiment with hyperparameters, and observe how these affect model training and performance.")
 
-## Page setup
-st.set_page_config(
-    page_title="Supervised Machine Learning Tool",
-    layout="wide")
-
-st.title("Supervised Machine Learning Tool")
-st.markdown(
-    "Upload a dataset, experiment with hyperparameters, and observe how these affect model training and performance.")
-
-def is_continuous(series):
-    """Numeric column with more than 10 unique values → treat as continuous."""
-    return pd.api.types.is_numeric_dtype(series) and series.nunique() > 10
-
-## Sidebar
+## SIDEBAR
 with st.sidebar:
-    st.header("Dataset")
-    uploaded = st.file_uploader("Upload a CSV file", type="csv")
 
+    st.header("Upload Dataset")
+
+    dataset = st.file_uploader("Upload a CSV file", type="csv")
     df = None
-    if uploaded:
-        df = pd.read_csv(uploaded)
-        st.success(f"Loaded {df.shape[0]} rows × {df.shape[1]} columns")
+    # Ask to upload a CSV file and read it once it is uploaded
+    if dataset:
+        df = pd.read_csv(dataset)
     else:
-        st.info("Upload a CSV file")
+        st.info("Upload a CSV file.")
 
+    # Once the dataset is uploaded, reveal the widgets
     if df is not None:
         st.divider()
         st.header("Choose Variables")
-        target_col = st.selectbox(
-            "Variable to estimate",
-            df.columns.tolist(),
-            index=len(df.columns) - 1,
-        )
+        # Allow picking as many feature variables as you want (no target needed for unsupervised)
+        all_cols = df.columns.tolist()
         feature_cols = st.multiselect(
-            "Features",
-            [c for c in df.columns if c != target_col],
-            default=[c for c in df.columns if c != target_col],
-        )
+            "Feature variables (columns to include in analysis)",
+            all_cols,
+            default=all_cols[:2])
+        if not feature_cols:
+            st.error("Select one or more feature variables.")
+            st.stop()
 
         st.divider()
         st.header("Choose a Model")
+        # Choose from the two models with a help section so the user knows what they are picking
         model_name = st.selectbox(
-            "Algorithm",
-            ["Linear Regression", "Logistic Regression"],
-            help=(
-                "Linear Regression for continuous numeric targets  \n"
-                "Logistic Regression for binary targets"
-            ),
-        )
+            "Model",
+            ["K-Means Clustering", "PCA"],
+            help=("K-Means Clustering: groups data into k clusters based on similarity.\n"
+                  "PCA (Principal Component Analysis): reduces dimensions while preserving as much variance as possible."))
 
         st.divider()
         st.header("Tune Hyperparameters")
+        st.caption("Tune for model testing and performance.")
 
-        random_state = st.number_input("Random seed", value=100, step=1)
-        test_size = st.slider("Test set size", 0.1, 0.5, 0.2, 0.05)
+        # Since results can vary by random initialization, allow the user to change the seed
+        random_state = st.number_input("Random seed", value=100, step=1,
+            help="Controls random initialization. Change this to test stability.")
 
+        # Model hyperparameter section — each model has different hyperparameters described in help sections
         model_params: dict = {}
 
-        if model_name == "Linear Regression":
-            model_params["alpha"] = st.slider(
-                "Regularization parameter (α)",
-                0.0, 10.0, 1.0, 0.1,
-                help="Higher α → stronger regularization, shrinks coefficients toward zero. α = 0 is equivalent to plain OLS.",
-            )
+        if model_name == "K-Means Clustering":
 
-        elif model_name == "Logistic Regression":
-            model_params["C"] = st.slider(
-                "C (inverse regularization strength)",
-                0.01, 10.0, 1.0, 0.01,
-                help="Smaller C → stronger regularization.",
-            )
-            model_params["penalty"] = st.selectbox(
-                "Penalty",
-                ["l2", "l1"],
-                help="L2 shrinks all coefficients toward zero; L1 can zero out coefficients entirely (built-in feature selection).",
-            )
-            model_params["solver"] = "liblinear"
-            model_params["max_iter"] = 1000
+            model_params["n_clusters"] = st.slider(
+                "Number of clusters (k)",
+                2, 15, 3,
+                help="The number of clusters to form. Use the Elbow Plot tab to help choose the best k.")
+
+            model_params["init"] = st.selectbox(
+                "Initialization method",
+                ["k-means++", "random"],
+                help="k-means++: smart initialization that speeds up convergence and avoids poor results.\nrandom: picks random starting centroids.")
+
+            model_params["n_init"] = st.slider(
+                "Number of initializations (n_init)",
+                1, 20, 10,
+                help="How many times the algorithm runs with different random seeds. The best result is kept. Higher = more stable but slower.")
+
+            model_params["max_iter"] = st.slider(
+                "Max iterations",
+                50, 500, 300,
+                step=50,
+                help="Maximum number of iterations per run before stopping. Increase if the model is not converging.")
+
             model_params["random_state"] = int(random_state)
 
-        st.divider()
-        train_btn = st.button("Train Model", use_container_width=True, type="primary")
+        elif model_name == "PCA":
 
-## Main panel
+            # Dynamically set the max components to the number of numeric feature columns selected
+            numeric_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
+            max_components = max(len(numeric_cols), 2)
+
+            model_params["n_components"] = st.slider(
+                "Number of components",
+                1, max_components, min(2, max_components),
+                help="How many principal components to retain. More components = more variance explained. Use the Cumulative Variance tab to find the right number.")
+
+            model_params["whiten"] = st.checkbox(
+                "Whiten",
+                value=False,
+                help="Scales each component to unit variance. Useful when features have very different scales, or before feeding PCA output into another model.")
+
+            model_params["random_state"] = int(random_state)
+
+## MAIN PANEL
 if df is None:
     st.info("Upload a dataset to perform analysis.")
     st.stop()
 
-with st.expander("Quick view of Dataset", expanded=True):
-    st.write(f"**Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
-    st.dataframe(df.head(11), use_container_width=True)
-    st.write("**Descriptive statistics:**")
+# Dataset preview
+with st.expander("Quick Dataset Preview", expanded=True):
+    left_col, right_col = st.columns([1, 2])
+
+    with left_col:
+        # Left column shows column names and their data types
+        st.markdown("**Column Names:**")
+        st.dataframe(df.dtypes.rename("type").reset_index().rename(columns={"index": "column"}),
+                     use_container_width=True, hide_index=True)
+        # Underneath, the dimensions of the dataset
+        st.markdown(f"**Rows:** {df.shape[0]}  \n**Columns:** {df.shape[1]}")
+
+    with right_col:
+        # Right column shows the first 12 rows
+        st.markdown("**First 12 rows:**")
+        st.dataframe(df.head(12), use_container_width=True)
+
+    # Below both columns: descriptive statistics
+    st.markdown("**Descriptive Statistics:**")
     st.dataframe(df.describe(), use_container_width=True)
 
-if not feature_cols:
-    st.warning("Please select at least one feature column.")
-    st.stop()
+## TRAINING
+# Use st.spinner so the model runs immediately whenever a change is made in the sidebar
+with st.spinner("Running the model"):
 
-## Training
-if train_btn:
-    with st.spinner("Training model"):
-        try:
-            # ── Model / target compatibility check ────────────────────────────
-            target_is_continuous = is_continuous(df[target_col])
+    try:
+        # Grab only the selected feature columns
+        all_var = df[feature_cols].copy()
 
-            if model_name == "Linear Regression" and not target_is_continuous:
-                st.error(
-                    f"**'{target_col}'** does not look like a continuous numeric target. "
-                    "Linear Regression requires a continuous numeric target. "
-                    "Please select a different target column or switch to **Logistic Regression**."
-                )
+        # Encode any text/categorical columns so sklearn can work with them
+        for col in all_var.select_dtypes(include=["object", "category"]).columns:
+            all_var[col] = OrdinalEncoder().fit_transform(all_var[[col]])
+
+        # Drop rows with missing values — missing data is a separate problem
+        old_len = len(all_var)
+        all_var = all_var.dropna()
+        num_dropped = old_len - len(all_var)
+        if num_dropped == 1:
+            st.caption("1 row with missing values was dropped before training.")
+        elif num_dropped > 1:
+            st.caption(f"{num_dropped} rows with missing values were dropped before training.")
+
+        X = all_var.values
+
+        # Scale features so distance-based and variance-based models work properly
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        ## K-MEANS CLUSTERING SECTION
+
+        if model_name == "K-Means Clustering":
+
+            model = KMeans(**model_params)
+            labels = model.fit_predict(X_scaled)
+
+            # Calculate the evaluation metrics
+            inertia   = model.inertia_
+            sil_score = silhouette_score(X_scaled, labels)
+
+            # Present the metrics below the dataset preview
+            st.subheader("Model Performance: K-Means Clustering")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Clusters (k)",      model_params["n_clusters"])
+            col2.metric("Inertia",           f"{inertia:.2f}")
+            col3.metric("Silhouette Score",  f"{sil_score:.4f}")
+
+            # Explain what a good score looks like
+            with st.expander("How do I interpret these metrics?"):
+                st.markdown("""
+| Metric | What it measures |
+|--------|-----------------|
+| **Clusters (k)** | The number of clusters you chose. Use the Elbow Plot to find the best k. |
+| **Inertia** | Sum of squared distances from each point to its cluster center. Lower = tighter, more compact clusters. Compare across different values of k. |
+| **Silhouette Score** | Measures how similar each point is to its own cluster vs. neighboring clusters. Ranges from -1 to 1. Closer to 1 is better. Above 0.5 is good. |
+Adjust k and watch inertia and the Silhouette Score together to find the best number of clusters.""")
+
+            table1, table2, table3 = st.tabs(["Elbow Plot", "Cluster Scatter", "Silhouette Analysis"])
+
+            with table1:
+                # Compute inertia for k = 1 to 15 to draw the elbow curve
+                k_range  = range(1, 16)
+                inertias = []
+                for k in k_range:
+                    km = KMeans(
+                        n_clusters=k,
+                        init=model_params["init"],
+                        n_init=model_params["n_init"],
+                        max_iter=model_params["max_iter"],
+                        random_state=model_params["random_state"])
+                    km.fit(X_scaled)
+                    inertias.append(km.inertia_)
+
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.plot(list(k_range), inertias, marker="o", color="blue", lw=2)
+                # Red dashed line marks the currently selected k
+                ax.axvline(model_params["n_clusters"], color="red", linestyle="--", lw=1.5,
+                           label=f"Current k = {model_params['n_clusters']}")
+                ax.set_xlabel("Number of clusters (k)")
+                ax.set_ylabel("Inertia")
+                ax.set_title("Elbow Plot")
+                ax.legend()
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption("Look for the 'elbow' — the point where inertia starts decreasing more slowly. The red dashed line marks your current k. Try adjusting k to where the curve bends.")
+
+            with table2:
+                # Reduce to 2D with PCA so we can visualize clusters regardless of how many features were selected
+                pca_2d      = PCA(n_components=2, random_state=int(random_state))
+                X_2d        = pca_2d.fit_transform(X_scaled)
+                var_exp     = pca_2d.explained_variance_ratio_
+
+                fig, ax = plt.subplots(figsize=(6, 5))
+                scatter = ax.scatter(X_2d[:, 0], X_2d[:, 1],
+                                     c=labels, cmap="tab10", alpha=0.7,
+                                     edgecolors="white", s=50)
+                # Overlay centroids projected into 2D space
+                centers_2d = pca_2d.transform(model.cluster_centers_)
+                ax.scatter(centers_2d[:, 0], centers_2d[:, 1],
+                           c="black", marker="X", s=200, zorder=5, label="Centroids")
+                ax.set_xlabel(f"PC1 ({var_exp[0]*100:.1f}% variance)")
+                ax.set_ylabel(f"PC2 ({var_exp[1]*100:.1f}% variance)")
+                ax.set_title("Cluster Scatter (PCA-reduced to 2D)")
+                ax.legend()
+                plt.colorbar(scatter, ax=ax, label="Cluster")
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption("Each color represents a cluster. X marks show the cluster centroids. Data is projected onto 2 principal components for visualization — the axis labels show how much variance each direction captures.")
+
+            with table3:
+                # Per-sample silhouette coefficients, grouped and sorted by cluster
+                sil_vals  = silhouette_samples(X_scaled, labels)
+                n_clusters = model_params["n_clusters"]
+                colors     = plt.cm.tab10(np.linspace(0, 1, n_clusters))
+
+                fig, ax = plt.subplots(figsize=(6, max(4, n_clusters * 0.8)))
+                y_lower = 10
+                for i in range(n_clusters):
+                    cluster_sil = np.sort(sil_vals[labels == i])
+                    size        = cluster_sil.shape[0]
+                    y_upper     = y_lower + size
+                    ax.fill_betweenx(np.arange(y_lower, y_upper),
+                                     0, cluster_sil,
+                                     facecolor=colors[i], edgecolor=colors[i], alpha=0.7)
+                    ax.text(-0.05, y_lower + 0.5 * size, str(i))
+                    y_lower = y_upper + 10
+
+                ax.axvline(sil_score, color="red", linestyle="--", lw=1.5,
+                           label=f"Avg = {sil_score:.4f}")
+                ax.set_xlabel("Silhouette coefficient")
+                ax.set_ylabel("Cluster")
+                ax.set_title("Silhouette Analysis by Cluster")
+                ax.legend()
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption("Each colored band is a cluster. Wider bands mean more data points in that cluster. Bands that extend past the red average line indicate well-separated clusters. Thin or negative bands suggest that cluster may overlap with another.")
+
+        ## PCA SECTION
+
+        elif model_name == "PCA":
+
+            # PCA requires numeric features only — filter and warn if non-numeric columns were selected
+            numeric_features = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
+            if len(numeric_features) < 2:
+                st.error("PCA requires at least 2 numeric feature columns. Please select more numeric columns.")
                 st.stop()
 
-            if model_name == "Logistic Regression" and target_is_continuous:
-                st.error(
-                    f"**'{target_col}'** does not look like a binary target. "
-                    "Logistic Regression requires a binary categorical target. "
-                    "Please select a different target column or switch to **Linear Regression**."
-                )
-                st.stop()
+            X_pca        = all_var[numeric_features].values
+            X_pca_scaled = StandardScaler().fit_transform(X_pca)
 
-            # ── Data preparation ──────────────────────────────────────────────
-            from sklearn.preprocessing import OrdinalEncoder
-            working = df[feature_cols + [target_col]].copy()
+            model         = PCA(**model_params)
+            X_transformed = model.fit_transform(X_pca_scaled)
 
-            # For logistic regression, save original target labels before encoding
-            original_target_labels = None
-            if model_name == "Logistic Regression":
-                le = LabelEncoder()
-                original_target_labels = le.classes_ if hasattr(le, 'classes_') else None
-                # Fit on the full target column to capture all label names
-                le.fit(working[target_col].astype(str))
-                original_target_labels = le.classes_
-                working[target_col] = le.transform(working[target_col].astype(str))
+            # Compute metrics
+            evr            = model.explained_variance_ratio_
+            cumulative_var = np.cumsum(evr)
+            n_components   = model_params["n_components"]
 
-            # Encode any remaining text feature columns
-            for col in working[feature_cols].select_dtypes(include=["object", "category"]).columns:
-                working[col] = OrdinalEncoder().fit_transform(working[[col]])
+            # Present the metrics below the dataset preview
+            st.subheader("Model Performance: PCA")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Components",        n_components)
+            col2.metric("Variance Explained", f"{cumulative_var[-1]*100:.2f}%")
+            col3.metric("PC1 Variance",       f"{evr[0]*100:.2f}%")
 
-            before = len(working)
-            working = working.dropna()
-            dropped = before - len(working)
-            if dropped > 0:
-                st.warning(f"⚠️ {dropped} row(s) with missing values were dropped before training.")
+            # Explain what a good score looks like
+            with st.expander("How do I interpret these metrics?"):
+                st.markdown("""
+| Metric | What it measures |
+|--------|-----------------|
+| **Components** | The number of principal components you chose to retain. Each one captures a different direction of variance in the data. |
+| **Variance Explained** | Cumulative % of the original dataset's variance captured by all retained components. 80–90%+ is generally considered good. |
+| **PC1 Variance** | % of variance captured by the first (strongest) principal component alone. A very high value means one direction dominates the data. |
+Adjust the number of components and watch the cumulative variance change. Aim for the fewest components that still explain 80–90% of variance.""")
 
-            X = working[feature_cols].values
-            y = working[target_col].values
+            table1, table2, table3 = st.tabs(["Scree Plot", "Cumulative Variance", "Component Loadings"])
 
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y,
-                test_size=float(test_size),
-                random_state=int(random_state),
-                stratify=(y if model_name == "Logistic Regression" else None),
-            )
+            with table1:
+                # Bar + line scree plot showing variance per component
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.bar(range(1, n_components + 1), evr * 100,
+                       color="blue", edgecolor="white", alpha=0.8)
+                ax.plot(range(1, n_components + 1), evr * 100,
+                        marker="o", color="red", lw=1.5)
+                ax.set_xlabel("Principal Component")
+                ax.set_ylabel("Variance Explained (%)")
+                ax.set_title("Scree Plot")
+                ax.set_xticks(range(1, n_components + 1))
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption("Each bar shows how much variance a single principal component captures. Look for where the bars level off — components after that point add little new information.")
 
-            scaler = StandardScaler()
-            X_train = scaler.fit_transform(X_train)
-            X_test = scaler.transform(X_test)
+            with table2:
+                # Cumulative variance curve with 80% and 90% reference lines
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.plot(range(1, n_components + 1), cumulative_var * 100,
+                        marker="o", color="blue", lw=2)
+                ax.axhline(80, color="orange", linestyle="--", lw=1, label="80% threshold")
+                ax.axhline(90, color="red",    linestyle="--", lw=1, label="90% threshold")
+                ax.set_xlabel("Number of Components")
+                ax.set_ylabel("Cumulative Variance Explained (%)")
+                ax.set_title("Cumulative Explained Variance")
+                ax.set_ylim(0, 105)
+                ax.set_xticks(range(1, n_components + 1))
+                ax.legend()
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption("Shows how much total variance is captured as you add more components. The orange and red lines mark the 80% and 90% thresholds — common targets for retaining enough information.")
 
-            # ── LINEAR REGRESSION ─────────────────────────────────────────────
-            if model_name == "Linear Regression":
-                model = Ridge(**model_params)
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
+            with table3:
+                # Heatmap of how much each original feature contributes to each component
+                loadings = pd.DataFrame(
+                    model.components_.T,
+                    index=numeric_features,
+                    columns=[f"PC{i+1}" for i in range(n_components)])
 
-                r2   = r2_score(y_test, y_pred)
-                mse  = mean_squared_error(y_test, y_pred)
-                rmse = np.sqrt(mse)
-                mae  = mean_absolute_error(y_test, y_pred)
+                fig, ax = plt.subplots(figsize=(max(5, n_components * 0.9), max(4, len(numeric_features) * 0.45)))
+                sns.heatmap(
+                    loadings, annot=True, fmt=".2f", cmap="coolwarm",
+                    center=0, linewidths=0.5, ax=ax)
+                ax.set_title("Component Loadings")
+                ax.set_xlabel("Principal Component")
+                ax.set_ylabel("Feature")
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption("Each cell shows how strongly a feature contributes to a principal component. Red = strong positive loading, blue = strong negative loading. Features with high absolute values drive that component.")
 
-                st.subheader("Model Performance — Linear Regression")
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("R²", f"{r2:.4f}")
-                c2.metric("MSE", f"{mse:.4f}")
-                c3.metric("RMSE", f"{rmse:.4f}")
-                c4.metric("MAE", f"{mae:.4f}")
-
-                tab1, tab2, tab3 = st.tabs(
-                    ["Predicted Values vs Actual Values", "Residuals", "Feature Coefficients"]
-                )
-
-                with tab1:
-                    fig, ax = plt.subplots(figsize=(5, 4))
-                    ax.scatter(y_test, y_pred, alpha=0.6, color="#185FA5", edgecolors="white", s=50)
-                    lims = [min(y_test.min(), y_pred.min()), max(y_test.max(), y_pred.max())]
-                    ax.plot(lims, lims, "k--", lw=1.5, label="Perfect prediction")
-                    ax.set_xlabel("Actual values")
-                    ax.set_ylabel("Predicted values")
-                    ax.set_title("Predicted vs Actual")
-                    ax.legend()
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab2:
-                    residuals = y_test - y_pred
-                    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-                    axes[0].scatter(y_pred, residuals, alpha=0.6, color="#E05A3A", edgecolors="white", s=50)
-                    axes[0].axhline(0, color="black", lw=1.5, linestyle="--")
-                    axes[0].set_xlabel("Predicted values")
-                    axes[0].set_ylabel("Residuals")
-                    axes[0].set_title("Residuals vs Fitted")
-                    axes[1].hist(residuals, bins=20, color="#534AB7", edgecolor="white")
-                    axes[1].set_xlabel("Residual")
-                    axes[1].set_ylabel("Frequency")
-                    axes[1].set_title("Residual Distribution")
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab3:
-                    coef_df = pd.DataFrame({
-                        "Feature": feature_cols,
-                        "Coefficient": model.coef_
-                    }).sort_values("Coefficient", key=abs, ascending=True)
-                    fig, ax = plt.subplots(figsize=(5, max(3, len(feature_cols) * 0.35)))
-                    colors = ["#E05A3A" if c < 0 else "#1D9E75" for c in coef_df["Coefficient"]]
-                    ax.barh(coef_df["Feature"], coef_df["Coefficient"], color=colors)
-                    ax.axvline(0, color="black", lw=1)
-                    ax.set_xlabel("Coefficient value")
-                    ax.set_title("Feature Coefficients\n(green = positive effect, red = negative)")
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                st.session_state["last_result"] = {
-                    "model_name": model_name,
-                    "r2": r2, "mse": mse, "rmse": rmse, "mae": mae,
-                }
-
-            # ── LOGISTIC REGRESSION ───────────────────────────────────────────
-            elif model_name == "Logistic Regression":
-                model = LogisticRegression(**model_params)
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-
-                # Use original label names for display
-                class_indices = np.unique(y).astype(int)
-                display_labels = original_target_labels[class_indices] if original_target_labels is not None else class_indices
-
-                n_classes = len(class_indices)
-                is_binary = n_classes == 2
-                avg = "binary" if is_binary else "weighted"
-
-                acc  = accuracy_score(y_test, y_pred)
-                prec = precision_score(y_test, y_pred, average=avg, zero_division=0)
-                rec  = recall_score(y_test, y_pred, average=avg, zero_division=0)
-                f1   = f1_score(y_test, y_pred, average=avg, zero_division=0)
-
-                y_prob = model.predict_proba(X_test)
-                if is_binary:
-                    auc = roc_auc_score(y_test, y_prob[:, 1])
-                else:
-                    auc = roc_auc_score(y_test, y_prob, multi_class="ovr", average="weighted")
-
-                st.subheader("Model Performance — Logistic Regression")
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("Accuracy",  f"{acc:.4f}")
-                c2.metric("Precision", f"{prec:.4f}")
-                c3.metric("Recall",    f"{rec:.4f}")
-                c4.metric("F1 Score",  f"{f1:.4f}")
-                c5.metric("AUC-ROC",   f"{auc:.4f}")
-
-                tab1, tab2, tab3, tab4 = st.tabs(
-                    ["Confusion Matrix", "ROC Curve", "Feature Coefficients", "Classification Report"]
-                )
-
-                with tab1:
-                    cm = confusion_matrix(y_test, y_pred)
-                    fig, ax = plt.subplots(figsize=(5, 4))
-                    sns.heatmap(
-                        cm, annot=True, fmt="d", cmap="Blues",
-                        xticklabels=display_labels, yticklabels=display_labels, ax=ax
-                    )
-                    ax.set_xlabel("Predicted label")
-                    ax.set_ylabel("True label")
-                    ax.set_title("Confusion Matrix — Logistic Regression")
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab2:
-                    fig, ax = plt.subplots(figsize=(5, 4))
-                    if is_binary:
-                        fpr, tpr, _ = roc_curve(y_test, y_prob[:, 1])
-                        ax.plot(fpr, tpr, label=f"AUC = {auc:.3f}", color="#185FA5", lw=2)
-                    else:
-                        for i, (idx, lbl) in enumerate(zip(class_indices, display_labels)):
-                            fpr, tpr, _ = roc_curve((y_test == idx).astype(int), y_prob[:, i])
-                            ax.plot(fpr, tpr, lw=1.5, label=str(lbl))
-                    ax.plot([0, 1], [0, 1], "k--", lw=1)
-                    ax.set_xlabel("False Positive Rate")
-                    ax.set_ylabel("True Positive Rate")
-                    ax.set_title("ROC Curve — Logistic Regression")
-                    ax.legend(loc="lower right")
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab3:
-                    coefs = (
-                        np.abs(model.coef_).mean(axis=0)
-                        if model.coef_.ndim > 1
-                        else model.coef_[0]
-                    )
-                    coef_df = pd.DataFrame({
-                        "Feature": feature_cols,
-                        "Coefficient": coefs,
-                    }).sort_values("Coefficient", key=abs, ascending=True)
-                    fig, ax = plt.subplots(figsize=(5, max(3, len(feature_cols) * 0.35)))
-                    colors = ["#E05A3A" if c < 0 else "#1D9E75" for c in coef_df["Coefficient"]]
-                    ax.barh(coef_df["Feature"], coef_df["Coefficient"], color=colors)
-                    ax.axvline(0, color="black", lw=1)
-                    ax.set_xlabel("Coefficient value")
-                    ax.set_title("Feature Coefficients\n(green = positive class, red = negative class)")
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                with tab4:
-                    report = classification_report(
-                        y_test, y_pred,
-                        target_names=display_labels,
-                        output_dict=True, zero_division=0
-                    )
-                    st.dataframe(
-                        pd.DataFrame(report).transpose().style.format(precision=3),
-                        use_container_width=True,
-                    )
-
-                st.session_state["last_result"] = {
-                    "model_name": model_name,
-                    "acc": acc, "prec": prec, "rec": rec, "f1": f1, "auc": auc,
-                }
-
-        except Exception as e:
-            st.error(f"Training failed: {e}")
-            st.exception(e)
-
-else:
-    st.info("After uploading the dataset, configure the model and click Train Model.")
+    # Neat error message instead of a long, ugly traceback
+    except Exception as e:
+        st.error(f"Model failed: {e}")
+        st.exception(e)
